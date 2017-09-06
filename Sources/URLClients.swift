@@ -126,10 +126,10 @@ public class URLBenchMark {
       usleep(1000)
     }
     res["cnt"] = count
-    res["max"] = ma / 1_000_000
-    res["min"] = mi / 1_000_000
+    res["max"] = ma / 1_000
+    res["min"] = mi / 1_000
     if count > 0 {
-      res["avg"] = total / count / 1_000_000
+      res["avg"] = total / count / 1_000
     }
     res["err"] = errors
     return res
