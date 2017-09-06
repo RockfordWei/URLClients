@@ -104,7 +104,7 @@ public class URLBenchMark {
       lock = false
     }
     while lock {
-      usleep(100)
+      Threading.sleep(seconds: 1e-6)
     }
     return result
   }
@@ -153,7 +153,7 @@ public class URLBenchMark {
         }
       }
       while (count + errors) < loops {
-        usleep(1000)
+        Threading.sleep(seconds: 1e-6)
       }
     }
     res["cnt"] = count

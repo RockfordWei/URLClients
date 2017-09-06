@@ -3,7 +3,7 @@ import XCTest
 
 class URLClientsTests: XCTestCase {
   let site = "https://perfect.org"
-  let rounds = 100
+  let rounds = 10
   let debug = false
 
   func testExample() {
