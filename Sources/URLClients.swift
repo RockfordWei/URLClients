@@ -8,7 +8,7 @@ func Now() -> UInt64 {
   #if os(Linux)
     var n = timespec()
     _ = clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &n)
-    return n.tv_nsec * 1_000_000_000 + n.tv_nsec
+    return UInt64(n.tv_nsec * 1_000_000_000 + n.tv_nsec)
   #else
     return DispatchTime.now().uptimeNanoseconds
   #endif
