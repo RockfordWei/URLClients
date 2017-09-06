@@ -1,168 +1,99 @@
+import cURL
 import PerfectCURL
 import PerfectLib
 import PerfectThread
 import Foundation
+
+func Now() -> UInt64 {
+  #if os(Linux)
+    var n = timespec()
+    _ = clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &n)
+    return n.tv_nsec * 1_000_000_000 + n.tv_nsec
+  #else
+    return DispatchTime.now().uptimeNanoseconds
+  #endif
+}
+
 public protocol URLClient {
   init(_ url: String)
-  func perform (_ completion: @escaping (String?, String?) -> Void)
+  func perform () -> UInt64?
 }
 
 public class URLImplPerfect: URLClient {
   let urlString: String
+  let curl: CURL
   public required init(_ url: String) {
     urlString = url
+    curl = CURL(url: urlString)
   }
-  public func perform(_ completion: @escaping (String?, String?) -> Void) -> Void {
-    CURLRequest(urlString).perform() { confirmation in
-      do {
-        let response = try confirmation()
-        let text = response.bodyString
-        completion(text, nil)
-      }catch {
-        completion(nil, "\(error)")
-      }
+  public func perform() -> UInt64? {
+    let start = Now()
+    let r = curl.performFully()
+    let end = Now()
+    curl.reset()
+    curl.url = urlString
+    if r.0 == 0 , (r.1.count + r.2.count) > 0 {
+      return end - start
+    } else {
+      return nil
     }
   }
 }
 
 public class URLImplApple: URLClient {
-  let config: URLSessionConfiguration
-  let urlString: String
+  let request: URLRequest
+  let session: URLSession
   public required init(_ url: String) {
-    config = URLSessionConfiguration.default
-    urlString = url
+    let config = URLSessionConfiguration.default
+    request = URLRequest(url: URL(string: url)!)
+    session = URLSession(configuration: config)
   }
-  public func perform(_ completion: @escaping (String?, String?) -> Void) -> Void {
-    guard let u = URL(string: urlString) else {
-      completion(nil, "URL init fault")
-      return 
-    }
-    let request = URLRequest(url: u)
-    let session = URLSession(configuration: config)
+  public func perform() -> UInt64? {
+    let start = Now()
+    var elapse: UInt64? = nil
     let task = session.dataTask(with: request) { data, response, error in
-      guard let d = data else {
-        completion(nil, "\(error!)")
+      guard let d = data, d.count > 0 else {
         return
       }
-      let s = d.withUnsafeBytes { (p: UnsafePointer<CChar>) -> String in
-        return String(cString: p)
-      }
-      completion(s, nil)
+      let end = Now()
+      elapse = end - start
     }
     task.resume()
+    while task.state == .running {
+      Threading.sleep(seconds: 0.001)
+    }
+    return elapse
   }
 }
 
 public class URLBenchMark {
   let client: URLClient
 
-  public var debug = false
-
   public init(client: URLClient) {
     self.client = client
   }
 
-  public func evaluateOnce(_ completion: @escaping (Int) -> Void) -> Void {
-
-    #if os(Linux)
-      var start = timespec()
-      _ = clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start)
-    #else
-      let start = DispatchTime.now().uptimeNanoseconds
-    #endif
-
-    client.perform() { text, error in
-      if let txt = text {
-        #if os(Linux)
-          var end = timespec()
-          _ = clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end)
-          let en = end.tv_nsec > start.tv_nsec ? end.tv_nsec - start.tv_nsec : start.tv_nsec - end.tv_nsec
-          let es = end.tv_sec - start.tv_sec
-          let elapse = Int( es * 1_000_000_000 + en )
-        #else
-          let end = DispatchTime.now().uptimeNanoseconds
-          let elapse = Int (end - start)
-        #endif
-        completion(elapse)
-        if self.debug {
-          print(txt)
-        }
-      } else {
-        completion(-1)
-        if let err = error, self.debug {
-          print(err)
-        }
-      }
-    }
-  }
-
-  public func evaluateBlockingOnce() -> Int {
-    var result = 0
-    var lock = true
-    evaluateOnce { elapse in
-      result = elapse
-      lock = false
-    }
-    while lock {
-      Threading.sleep(seconds: 1e-6)
-    }
-    return result
-  }
-
-  public func evaluate(blocking: Bool = false, loops: Int) -> [String: Int] {
-    var res: [String: Int] = [:]
-    var mi = Int(INT16_MAX)
-    var ma = 0
-    var total = 0
+  public func evaluate(loops: Int) -> (cnt: Int, err: Int, max: UInt64, min: UInt64, avg: UInt64) {
+    var mi = UInt64(UINT32_MAX)
+    var ma = UInt64(0)
+    var total = UInt64(0)
     var count = 0
     var errors = 0
-    if blocking {
-      for _ in 1 ... loops {
-        let elapse = evaluateBlockingOnce()
-        if elapse < 0 {
-          errors += 1
-        } else {
-          total += elapse
-          count += 1
-          if elapse < mi {
-            mi = elapse
-          }
-          if elapse > ma {
-            ma = elapse
-          }
+    for _ in 1 ... loops {
+      if let elapse = client.perform() {
+        if elapse > ma {
+          ma = elapse
         }
-      }
-    }else {
-      let lock = Threading.Lock()
-      for _ in 1 ... loops {
-        evaluateOnce() { elapse in
-          lock.doWithLock {
-            if elapse < 0 {
-              errors += 1
-            } else {
-              total += elapse
-              count += 1
-              if elapse < mi {
-                mi = elapse
-              }
-              if elapse > ma {
-                ma = elapse
-              }
-            }
-          }
+        if elapse < mi {
+          mi = elapse
         }
-      }
-      while (count + errors) < loops {
-        Threading.sleep(seconds: 1e-6)
+        total += elapse
+        count += 1
+      } else {
+        errors += 1
       }
     }
-    res["cnt"] = count
-    res["max"] = ma / 1_000
-    res["min"] = mi / 1_000
-    if count > 0 {
-      res["avg"] = total / count / 1_000
-    }
-    res["err"] = errors
-    return res
+    return (cnt: count, err: errors, max: ma, min: mi,
+            avg: total / UInt64(count))
   }
 }
