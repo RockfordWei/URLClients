@@ -96,34 +96,65 @@ public class URLBenchMark {
     }
   }
 
-  public func evaluate(loops: Int) -> [String: Int] {
+  public func evaluateBlockingOnce() -> Int {
+    var result = 0
+    var lock = true
+    evaluateOnce { elapse in
+      result = elapse
+      lock = false
+    }
+    while lock {
+      usleep(100)
+    }
+    return result
+  }
+
+  public func evaluate(blocking: Bool = false, loops: Int) -> [String: Int] {
     var res: [String: Int] = [:]
     var mi = Int(INT16_MAX)
     var ma = 0
     var total = 0
     var count = 0
     var errors = 0
-    let lock = Threading.Lock()
-    for _ in 1 ... loops {
-      evaluateOnce() { elapse in
-        lock.doWithLock {
-          if elapse < 0 {
-            errors += 1
-          } else {
-            total += elapse
-            count += 1
-            if elapse < mi {
-              mi = elapse
-            }
-            if elapse > ma {
-              ma = elapse
+    if blocking {
+      for _ in 1 ... loops {
+        let elapse = evaluateBlockingOnce()
+        if elapse < 0 {
+          errors += 1
+        } else {
+          total += elapse
+          count += 1
+          if elapse < mi {
+            mi = elapse
+          }
+          if elapse > ma {
+            ma = elapse
+          }
+        }
+      }
+    }else {
+      let lock = Threading.Lock()
+      for _ in 1 ... loops {
+        evaluateOnce() { elapse in
+          lock.doWithLock {
+            if elapse < 0 {
+              errors += 1
+            } else {
+              total += elapse
+              count += 1
+              if elapse < mi {
+                mi = elapse
+              }
+              if elapse > ma {
+                ma = elapse
+              }
             }
           }
         }
       }
-    }
-    while (count + errors) < loops {
-      usleep(1000)
+      while (count + errors) < loops {
+        usleep(1000)
+      }
     }
     res["cnt"] = count
     res["max"] = ma / 1_000
